@@ -38,4 +38,6 @@ public interface UserRepository {
      * @return Nombre total d'utilisateurs
      */
     long count();
+
+    Optional<UserAggregate> findFirstByMatricule(UserMatricule matricule);
 }

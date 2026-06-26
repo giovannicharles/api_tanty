@@ -5,6 +5,9 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import com.NTFOODS.Api_tanty.modules.users.domain.aggregate.UserAggregate;
+import com.NTFOODS.Api_tanty.modules.users.domain.valueobject.UserMatricule;
+
 /**
  * UserJpaRepository - Interface Spring Data JPA pour l'entité UserJpaEntity
  * Fournit les méthodes d'accès aux données pour les utilisateurs
@@ -30,4 +33,5 @@ public interface UserJpaRepository extends JpaRepository<UserJpaEntity, UUID> {
      * @return Nombre total d'utilisateurs
      */
     long count();
+    Optional<UserJpaEntity> findFirstByMatricule(String matricule);
 }

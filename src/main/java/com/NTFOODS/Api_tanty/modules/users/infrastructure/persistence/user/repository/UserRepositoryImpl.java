@@ -63,4 +63,10 @@ public class UserRepositoryImpl implements UserRepository {
     public long count() {
         return jpaRepository.count();
     }
+
+    @Override
+    public Optional<UserAggregate> findFirstByMatricule(UserMatricule matricule) {
+        return jpaRepository.findFirstByMatricule(matricule.value())
+            .map(UserMapper::toDomain);
+    }
 }
