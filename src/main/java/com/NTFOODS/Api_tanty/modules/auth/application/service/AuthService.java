@@ -74,7 +74,7 @@ public class AuthService {
             String token = jwtService.generateToken(userDetails);
 
             // Récupérer l'agrégat utilisateur depuis la base de données
-            UserAggregate userAggregate = userRepository.findByMatricule(new UserMatricule(loginRequest.getMatricule()))
+            UserAggregate userAggregate = userRepository.findFirstByMatricule(new UserMatricule(loginRequest.getMatricule()))
                 .orElseThrow(() -> new RuntimeException("Utilisateur non trouvé"));
 
             // Construire et retourner la réponse d'authentification
