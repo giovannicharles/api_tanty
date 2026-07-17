@@ -1,5 +1,6 @@
 package com.NTFOODS.Api_tanty.shared.infrastructure.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 /**
@@ -109,4 +110,16 @@ public class PageResponse<T> {
     public void setHasNext(boolean hasNext) {
         this.hasNext = hasNext;
     }
+
+    @JsonProperty("contenu")
+    public List<T> getContenu() { return content; }
+
+    @JsonProperty("pageCourante")
+    public int getPageCourante() { return currentPage; }
+
+    @JsonProperty("taillePage")
+    public int getTaillePage() { return pageSize; }
+
+    @JsonProperty("dernierePage")
+    public boolean isDernierePage() { return !hasNext; }
 }

@@ -17,5 +17,7 @@ public class ReceiptSecondValidatedEvent implements DomainEvent {
         this.occurredOn = LocalDateTime.now();
     }
 
-    // Getters
+    public ReceiptNumber getReceiptNumber() { return receiptNumber; }
+    public UserId getValidator() { return validator; }
+    public LocalDateTime getOccurredOn() { return occurredOn; }
 }

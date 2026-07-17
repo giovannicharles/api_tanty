@@ -6,10 +6,21 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * ReceiptJpaEntity - Table stock_receipts.
+ * Réécrite pour porter le type de réception (CONSOMMABLE/MATIERE_PREMIERE/MATERIEL)
+ * et les informations de rejet, absentes de l'ancienne version (qui provoquait des
+ * erreurs de compilation dans ReceiptMapper : champs référencés mais inexistants).
+ */
 @Entity
-@Table(name = "receipts")
+@Table(name = "stock_receipts", indexes = {
+        @Index(name = "idx_receipt_number", columnList = "receiptNumber", unique = true),
+        @Index(name = "idx_receipt_status", columnList = "status"),
+        @Index(name = "idx_receipt_type", columnList = "receptionType")
+})
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -19,54 +30,57 @@ public class ReceiptJpaEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
+    @Column(nullable = false, unique = true, length = 40)
     private String receiptNumber;
 
-    @Column(nullable = false)
-    private String source;
+    @Column(nullable = false, length = 30)
+    private String receptionType;
 
-    @Column(name = "source_id")
+    @Column(length = 150)
+    private String sourceLabel;
+
     private Long sourceId;
 
-    @Column(name = "source_name")
-    private String sourceName;
+    @Column(nullable = false)
+    private LocalDateTime receiptDate;
 
     @Column(nullable = false)
-    private String receiptDate;
+    private java.util.UUID destinationLocationId;
 
-    @Column(name = "warehouse_id", nullable = false)
-    private Long warehouseId;
+    @Column(nullable = false, length = 30)
+    private String createdBy;
 
-    @Column(name = "warehouse_name")
-    private String warehouseName;
-
-    @Column(nullable = false)
+    @Column(nullable = false, length = 30)
     private String status;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(length = 30)
+    private String firstValidator;
+    private LocalDateTime firstValidatedAt;
+    @Column(length = 500)
+    private String firstValidationNotes;
+
+    @Column(length = 30)
+    private String secondValidator;
+    private LocalDateTime secondValidatedAt;
+    @Column(length = 500)
+    private String secondValidationNotes;
+
+    private boolean requiresAuthCode;
+
+    @Column(length = 500)
+    private String rejectionReason;
+    @Column(length = 30)
+    private String rejectedBy;
+    private LocalDateTime rejectedAt;
+
+    @OneToMany(mappedBy = "receipt", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    private List<ReceiptItemJpaEntity> items = new ArrayList<>();
+
+    @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "first_validator_id")
-    private Long firstValidatorId;
-
-    @Column(name = "first_validator_name")
-    private String firstValidatorName;
-
-    @Column(name = "first_validated_at")
-    private String firstValidatedAt;
-
-    @Column(name = "first_validator_notes")
-    private String firstValidatorNotes;
-
-    @Column(name = "second_validator_id")
-    private Long secondValidatorId;
-
-    @Column(name = "second_validator_name")
-    private String secondValidatorName;
-
-    @Column(name = "second_validated_at")
-    private String secondValidatedAt;
-
-    @OneToMany(mappedBy = "receipt", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<ReceiptItemJpaEntity> items;
+    @PrePersist
+    void prePersist() {
+        if (createdAt == null) createdAt = LocalDateTime.now();
+    }
 }

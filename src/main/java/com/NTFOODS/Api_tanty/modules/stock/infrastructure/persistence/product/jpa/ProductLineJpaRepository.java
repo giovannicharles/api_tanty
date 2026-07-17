@@ -2,6 +2,9 @@ package com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.product.j
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface ProductLineJpaRepository extends JpaRepository<ProductLineJpaEntity, Long> {
+import java.util.List;
 
+public interface ProductLineJpaRepository extends JpaRepository<ProductLineJpaEntity, Long> {
+    List<ProductLineJpaEntity> findByBrandId(Long brandId);
+    List<ProductLineJpaEntity> findByActiveTrue();
 }

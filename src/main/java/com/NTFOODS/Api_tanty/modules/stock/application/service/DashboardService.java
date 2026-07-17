@@ -2,225 +2,223 @@ package com.NTFOODS.Api_tanty.modules.stock.application.service;
 
 import com.NTFOODS.Api_tanty.modules.stock.application.dto.DashboardStatsResponse;
 import com.NTFOODS.Api_tanty.modules.stock.application.dto.StockLevelResponse;
+import com.NTFOODS.Api_tanty.modules.stock.domain.common.enums.StockLocationType;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.product.jpa.ProductJpaEntity;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.product.jpa.ProductJpaRepository;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.stock.jpa.StockItemJpaEntity;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.stock.jpa.StockLocationJpaEntity;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.stock.jpa.StockMovementJpaEntity;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.stock.repository.StockItemRepository;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.stock.repository.StockLocationRepository;
+import com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.stock.repository.StockMovementRepository;
 import com.NTFOODS.Api_tanty.shared.infrastructure.dto.PageRequest;
 import com.NTFOODS.Api_tanty.shared.infrastructure.dto.PageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
-/**
- * DashboardService - Service pour la logique métier du dashboard Stock
- * Fournit les méthodes pour récupérer et calculer les statistiques du dashboard
- * Utilise le cache Redis pour optimiser les performances des requêtes fréquentes
- */
 @Service
 public class DashboardService {
 
-    /**
-     * Constructeur par défaut
-     */
-    public DashboardService() {
+  private static final Logger log = LoggerFactory.getLogger(DashboardService.class);
+
+  private final StockItemRepository stockItemRepository;
+  private final StockLocationRepository stockLocationRepository;
+  private final StockMovementRepository stockMovementRepository;
+  private final ProductJpaRepository productJpaRepository;
+
+  public DashboardService(StockItemRepository stockItemRepository,
+                          StockLocationRepository stockLocationRepository,
+                          StockMovementRepository stockMovementRepository,
+                          ProductJpaRepository productJpaRepository) {
+    this.stockItemRepository = stockItemRepository;
+    this.stockLocationRepository = stockLocationRepository;
+    this.stockMovementRepository = stockMovementRepository;
+    this.productJpaRepository = productJpaRepository;
+  }
+
+  @Cacheable(value = "dashboardStats", key = "'stats'")
+  public DashboardStatsResponse getDashboardStats() {
+    // Total des articles en stock (tous emplacements confondus)
+    long totalStockLevels = stockItemRepository.count();
+
+    // Mouvements en attente
+    List<StockMovementJpaEntity> pendingMovements = stockMovementRepository.findPendingMovements();
+    int pendingReceipts = (int) pendingMovements.stream()
+      .filter(m -> m.getType().name().contains("RECEPTION") || m.getType().name().equals("ENTRY"))
+      .count();
+
+    // Total des emplacements
+    int totalWarehouses = (int) stockLocationRepository.count();
+
+    // Alertes critiques = stock items avec quantite <= 0 ou tres basse
+    // On considere critique si quantite < 10 cartons
+    List<StockItemJpaEntity> allItems = stockItemRepository.findAll();
+    int criticalAlerts = (int) allItems.stream()
+      .filter(item -> item.getQuantity() != null && item.getQuantity().compareTo(new BigDecimal("10")) < 0)
+      .count();
+
+    // Valeur totale du stock
+    BigDecimal totalStockValue = BigDecimal.ZERO;
+    for (StockItemJpaEntity item : allItems) {
+      Optional<ProductJpaEntity> productOpt = productJpaRepository.findById(item.getProductId());
+      if (productOpt.isPresent()) {
+        BigDecimal price = productOpt.get().getUnitPriceAmount() != null ? productOpt.get().getUnitPriceAmount() : BigDecimal.ZERO;
+        totalStockValue = totalStockValue.add(item.getQuantity().multiply(price));
+      }
+    }
+    totalStockValue = totalStockValue.setScale(2, RoundingMode.HALF_UP);
+
+    // Lots de production en attente (mouvements de type PRODUCTION avec statut PENDING)
+    int pendingBatches = (int) pendingMovements.stream()
+      .filter(m -> m.getType().name().equals("PRODUCTION"))
+      .count();
+
+    // Commandes internes actives = dotations PENDING + APPROVED
+    int activeInternalOrders = (int) pendingMovements.stream()
+      .filter(m -> m.getType().name().equals("DOTATION"))
+      .count();
+
+    return new DashboardStatsResponse(
+      (int) totalStockLevels,
+      pendingReceipts,
+      pendingBatches,
+      activeInternalOrders,
+      criticalAlerts,
+      totalStockValue,
+      totalWarehouses
+    );
+  }
+
+  @Cacheable(value = "stockAlerts", key = "'alerts-' + #pageRequest.page + '-' + #pageRequest.size")
+  public PageResponse<StockLevelResponse> getStockAlerts(PageRequest pageRequest) {
+    List<StockItemJpaEntity> allItems = stockItemRepository.findAll();
+
+    // Recuperer la map des produits pour avoir les noms et prix
+    Map<Long, ProductJpaEntity> productMap = productJpaRepository.findAll().stream()
+      .collect(Collectors.toMap(ProductJpaEntity::getId, p -> p));
+
+    // Recuperer la map des emplacements
+    Map<java.util.UUID, StockLocationJpaEntity> locationMap = stockLocationRepository.findAll().stream()
+      .collect(Collectors.toMap(StockLocationJpaEntity::getLocationId, loc -> loc));
+
+    List<StockLevelResponse> alerts = new ArrayList<>();
+    for (StockItemJpaEntity item : allItems) {
+      if (item.getQuantity() == null) continue;
+
+      // Seuil par defaut : 10 cartons
+      BigDecimal reorderPoint = new BigDecimal("10");
+      String alertLevel = "NORMAL";
+
+      if (item.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
+        alertLevel = "CRITIQUE";
+      } else if (item.getQuantity().compareTo(reorderPoint) < 0) {
+        alertLevel = "CRITIQUE";
+      } else if (item.getQuantity().compareTo(new BigDecimal("25")) < 0) {
+        alertLevel = "FAIBLE";
+      }
+
+      if (!"NORMAL".equals(alertLevel)) {
+        ProductJpaEntity product = productMap.get(item.getProductId());
+        StockLocationJpaEntity location = locationMap.get(item.getLocationId());
+
+        String productName = product != null ? product.getSku() : item.getProductSku();
+        String warehouseName = location != null ? location.getName() : "Inconnu";
+        BigDecimal price = product != null && product.getUnitPriceAmount() != null ? product.getUnitPriceAmount() : BigDecimal.ZERO;
+        BigDecimal stockValue = item.getQuantity().multiply(price).setScale(2, RoundingMode.HALF_UP);
+        Long warehouseId = location != null ? location.getId() : null;
+
+        alerts.add(new StockLevelResponse(
+          item.getId(),
+          productName,
+          item.getProductSku(),
+          item.getQuantity().intValue(),
+          reorderPoint.intValue(),
+          stockValue,
+          warehouseId != null ? warehouseId.intValue() : 0,
+          warehouseName,
+          alertLevel
+        ));
+      }
     }
 
-    /**
-     * Récupère les statistiques générales du dashboard
-     * Calcule les KPIs principaux à partir des données de stock
-     * Utilise le cache Redis pour éviter de recalculer ces statistiques à chaque requête
-     * @return Réponse contenant les statistiques du dashboard
-     */
-    @Cacheable(value = "dashboardStats", key = "'stats'")
-    public DashboardStatsResponse getDashboardStats() {
-        // Pour l'instant, retourner des données simulées
-        // À remplacer par les vraies données une fois les repositories implémentés
+    // Trier par niveau d'alerte (CRITIQUE en premier)
+    alerts.sort((a, b) -> {
+      if ("CRITIQUE".equals(a.getAlertLevel()) && !"CRITIQUE".equals(b.getAlertLevel())) return -1;
+      if (!"CRITIQUE".equals(a.getAlertLevel()) && "CRITIQUE".equals(b.getAlertLevel())) return 1;
+      return a.getQuantity().compareTo(b.getQuantity());
+    });
 
-        // Nombre total de niveaux de stock (simulé)
-        int totalStockLevels = 156;
+    return paginate(alerts, pageRequest);
+  }
 
-        // Nombre de réceptions en attente (simulé)
-        int pendingReceipts = 12;
+  @Cacheable(value = "stockLevels", key = "'levels-' + #pageRequest.page + '-' + #pageRequest.size")
+  public PageResponse<StockLevelResponse> getStockLevels(PageRequest pageRequest) {
+    List<StockItemJpaEntity> allItems = stockItemRepository.findAll();
 
-        // Nombre de lots de production en attente (simulé)
-        int pendingBatches = 8;
+    Map<Long, ProductJpaEntity> productMap = productJpaRepository.findAll().stream()
+      .collect(Collectors.toMap(ProductJpaEntity::getId, p -> p));
 
-        // Nombre de commandes internes actives (simulé)
-        int activeInternalOrders = 5;
+    Map<java.util.UUID, StockLocationJpaEntity> locationMap = stockLocationRepository.findAll().stream()
+      .collect(Collectors.toMap(StockLocationJpaEntity::getLocationId, loc -> loc));
 
-        // Nombre d'alertes critiques (simulé)
-        int criticalAlerts = 7;
+    List<StockLevelResponse> levels = new ArrayList<>();
+    for (StockItemJpaEntity item : allItems) {
+      ProductJpaEntity product = productMap.get(item.getProductId());
+      StockLocationJpaEntity location = locationMap.get(item.getLocationId());
 
-        // Valeur totale du stock (simulé)
-        BigDecimal totalStockValue = new BigDecimal("2450000.00");
+      String productName = product != null ? product.getSku() : item.getProductSku();
+      String warehouseName = location != null ? location.getName() : "Inconnu";
+      BigDecimal reorderPoint = new BigDecimal("10");
+      BigDecimal price = product != null && product.getUnitPriceAmount() != null ? product.getUnitPriceAmount() : BigDecimal.ZERO;
+      BigDecimal stockValue = item.getQuantity().multiply(price).setScale(2, RoundingMode.HALF_UP);
+      Long warehouseId = location != null ? location.getId() : null;
 
-        // Nombre d'entrepôts (fixe à 4 selon le frontend)
-        int totalWarehouses = 4;
+      String alertLevel = "NORMAL";
+      if (item.getQuantity().compareTo(BigDecimal.ZERO) == 0) {
+        alertLevel = "CRITIQUE";
+      } else if (item.getQuantity().compareTo(reorderPoint) < 0) {
+        alertLevel = "CRITIQUE";
+      } else if (item.getQuantity().compareTo(new BigDecimal("25")) < 0) {
+        alertLevel = "FAIBLE";
+      } else if (item.getQuantity().compareTo(new BigDecimal("100")) > 0) {
+        alertLevel = "SURPLUS";
+      }
 
-        // Construire et retourner la réponse des statistiques
-        return new DashboardStatsResponse(
-            totalStockLevels,
-            pendingReceipts,
-            pendingBatches,
-            activeInternalOrders,
-            criticalAlerts,
-            totalStockValue,
-            totalWarehouses
-        );
+      levels.add(new StockLevelResponse(
+        item.getId(),
+        productName,
+        item.getProductSku(),
+        item.getQuantity().intValue(),
+        reorderPoint.intValue(),
+        stockValue,
+        warehouseId != null ? warehouseId.intValue() : 0,
+        warehouseName,
+        alertLevel
+      ));
     }
 
-    /**
-     * Récupère les niveaux de stock en alerte
-     * Filtre les niveaux de stock avec un niveau d'alerte CRITIQUE ou FAIBLE
-     * Utilise le cache Redis pour éviter de recalculer ces alertes à chaque requête
-     * @param pageRequest Paramètres de pagination
-     * @return Page des niveaux de stock en alerte
-     */
-    @Cacheable(value = "stockAlerts", key = "'alerts-' + #pageRequest.page + '-' + #pageRequest.size")
-    public PageResponse<StockLevelResponse> getStockAlerts(PageRequest pageRequest) {
-        // Pour l'instant, retourner des données simulées
-        // À remplacer par les vraies données une fois les repositories implémentés
-        List<StockLevelResponse> allAlerts = new ArrayList<>();
+    return paginate(levels, pageRequest);
+  }
 
-        // Ajouter quelques alertes simulées
-        allAlerts.add(new StockLevelResponse(
-            1L,
-            "Farine de blé T55",
-            "FAR-001",
-            50,
-            200,
-            new BigDecimal("12500.00"),
-            1,
-            "Matières Premières",
-            "CRITIQUE"
-        ));
+  private PageResponse<StockLevelResponse> paginate(List<StockLevelResponse> allItems, PageRequest pageRequest) {
+    int start = pageRequest.getOffset();
+    int end = Math.min(start + pageRequest.getSize(), allItems.size());
 
-        allAlerts.add(new StockLevelResponse(
-            2L,
-            "Sucre cristallisé",
-            "SUC-002",
-            80,
-            300,
-            new BigDecimal("9600.00"),
-            1,
-            "Matières Premières",
-            "CRITIQUE"
-        ));
-
-        allAlerts.add(new StockLevelResponse(
-            3L,
-            "Huile végétale",
-            "HUI-003",
-            150,
-            250,
-            new BigDecimal("18000.00"),
-            1,
-            "Matières Premières",
-            "FAIBLE"
-        ));
-
-        // Appliquer la pagination
-        int start = pageRequest.getOffset();
-        int end = Math.min(start + pageRequest.getSize(), allAlerts.size());
-
-        // Vérifier que start est valide
-        if (start >= allAlerts.size()) {
-            // Retourner une page vide si la page demandée dépasse le nombre total d'éléments
-            return new PageResponse<>(new ArrayList<>(), pageRequest.getPage(), pageRequest.getSize(), allAlerts.size());
-        }
-
-        List<StockLevelResponse> pagedAlerts = allAlerts.subList(start, end);
-
-        // Construire et retourner la réponse paginée
-        return new PageResponse<>(pagedAlerts, pageRequest.getPage(), pageRequest.getSize(), allAlerts.size());
+    if (start >= allItems.size()) {
+      return new PageResponse<>(new ArrayList<>(), pageRequest.getPage(), pageRequest.getSize(), allItems.size());
     }
 
-    /**
-     * Récupère tous les niveaux de stock
-     * Utilise le cache Redis pour éviter de recalculer ces niveaux à chaque requête
-     * @param pageRequest Paramètres de pagination
-     * @return Page des niveaux de stock
-     */
-    @Cacheable(value = "stockLevels", key = "'levels-' + #pageRequest.page + '-' + #pageRequest.size")
-    public PageResponse<StockLevelResponse> getStockLevels(PageRequest pageRequest) {
-        // Pour l'instant, retourner des données simulées
-        // À remplacer par les vraies données une fois les repositories implémentés
-        List<StockLevelResponse> allStockLevels = new ArrayList<>();
-
-        // Ajouter quelques niveaux de stock simulés
-        allStockLevels.add(new StockLevelResponse(
-            1L,
-            "Farine de blé T55",
-            "FAR-001",
-            50,
-            200,
-            new BigDecimal("12500.00"),
-            1,
-            "Matières Premières",
-            "CRITIQUE"
-        ));
-
-        allStockLevels.add(new StockLevelResponse(
-            2L,
-            "Sucre cristallisé",
-            "SUC-002",
-            80,
-            300,
-            new BigDecimal("9600.00"),
-            1,
-            "Matières Premières",
-            "CRITIQUE"
-        ));
-
-        allStockLevels.add(new StockLevelResponse(
-            3L,
-            "Huile végétale",
-            "HUI-003",
-            150,
-            250,
-            new BigDecimal("18000.00"),
-            1,
-            "Matières Premières",
-            "FAIBLE"
-        ));
-
-        allStockLevels.add(new StockLevelResponse(
-            4L,
-            "Levure sèche",
-            "LEV-004",
-            500,
-            100,
-            new BigDecimal("25000.00"),
-            1,
-            "Matières Premières",
-            "NORMAL"
-        ));
-
-        allStockLevels.add(new StockLevelResponse(
-            5L,
-            "Pain complet",
-            "PAN-001",
-            200,
-            50,
-            new BigDecimal("1000.00"),
-            3,
-            "Produits Finis",
-            "NORMAL"
-        ));
-
-        // Appliquer la pagination
-        int start = pageRequest.getOffset();
-        int end = Math.min(start + pageRequest.getSize(), allStockLevels.size());
-
-        // Vérifier que start est valide
-        if (start >= allStockLevels.size()) {
-            // Retourner une page vide si la page demandée dépasse le nombre total d'éléments
-            return new PageResponse<>(new ArrayList<>(), pageRequest.getPage(), pageRequest.getSize(), allStockLevels.size());
-        }
-
-        List<StockLevelResponse> pagedStockLevels = allStockLevels.subList(start, end);
-
-        // Construire et retourner la réponse paginée
-        return new PageResponse<>(pagedStockLevels, pageRequest.getPage(), pageRequest.getSize(), allStockLevels.size());
-    }
+    List<StockLevelResponse> paged = allItems.subList(start, end);
+    return new PageResponse<>(paged, pageRequest.getPage(), pageRequest.getSize(), allItems.size());
+  }
 }

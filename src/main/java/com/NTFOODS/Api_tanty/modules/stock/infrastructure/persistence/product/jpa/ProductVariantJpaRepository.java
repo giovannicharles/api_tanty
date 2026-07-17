@@ -2,6 +2,8 @@ package com.NTFOODS.Api_tanty.modules.stock.infrastructure.persistence.product.j
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface ProductVariantJpaRepository extends JpaRepository<ProductVariantJpaEntity, Long> {
+import java.util.List;
 
+public interface ProductVariantJpaRepository extends JpaRepository<ProductVariantJpaEntity, Long> {
+    List<ProductVariantJpaEntity> findByProductLineId(Long productLineId);
 }

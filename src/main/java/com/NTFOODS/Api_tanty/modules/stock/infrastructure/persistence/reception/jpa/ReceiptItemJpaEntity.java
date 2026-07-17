@@ -5,8 +5,15 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
+
+/**
+ * ReceiptItemJpaEntity - Table stock_receipt_items.
+ * Porte les informations de conditionnement (§2 du cahier des charges) : type
+ * d'emballage, quantité par carton, numéro de lot.
+ */
 @Entity
-@Table(name = "receipt_items")
+@Table(name = "stock_receipt_items")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -20,30 +27,32 @@ public class ReceiptItemJpaEntity {
     @JoinColumn(name = "receipt_id", nullable = false)
     private ReceiptJpaEntity receipt;
 
-    @Column(name = "product_id", nullable = false)
+    @Column(nullable = false)
     private Long productId;
 
-    @Column(name = "product_name", nullable = false)
+    @Column(nullable = false, length = 150)
     private String productName;
 
-    @Column(name = "product_sku", nullable = false)
+    @Column(nullable = false, length = 40)
     private String productSku;
 
-    @Column(name = "product_unit", nullable = false)
-    private String productUnit;
+    @Column(length = 30)
+    private String packagingType;
 
-    @Column(name = "ordered_qty", nullable = false)
-    private Integer orderedQty;
+    private BigDecimal quantityPerCarton;
 
-    @Column(name = "received_qty", nullable = false)
-    private Integer receivedQty;
+    @Column(nullable = false, precision = 15, scale = 3)
+    private BigDecimal orderedQty;
 
-    @Column
-    private Integer deviation;
+    @Column(nullable = false, length = 20)
+    private String unit;
 
-    @Column(name = "deviation_reason")
-    private String deviationReason;
+    @Column(nullable = false, precision = 15, scale = 3)
+    private BigDecimal receivedQty;
 
-    @Column(name = "lot_number")
+    @Column(length = 40)
     private String lotNumber;
+
+    @Column(length = 300)
+    private String deviationReason;
 }

@@ -1,8 +1,10 @@
 package com.NTFOODS.Api_tanty.modules.users.domain.repository;
 
+import java.util.List;
 import java.util.Optional;
 
 import com.NTFOODS.Api_tanty.modules.users.domain.aggregate.UserAggregate;
+import com.NTFOODS.Api_tanty.modules.users.domain.enums.UserRole;
 import com.NTFOODS.Api_tanty.modules.users.domain.valueobject.PhoneNumber;
 import com.NTFOODS.Api_tanty.modules.users.domain.valueobject.UserMatricule;
 import com.NTFOODS.Api_tanty.shared.kernel.valueobject.UserId;
@@ -39,5 +41,12 @@ public interface UserRepository {
      */
     long count();
 
-    Optional<UserAggregate> findFirstByMatricule(UserMatricule matricule);
+    /**
+     * Trouve tous les utilisateurs actifs ayant un rôle donné.
+     * Utilisé notamment pour notifier les valideurs concernés (ex: tous les ROLE_FINANCE
+     * lors de la réception d'une matière première).
+     * @param role Rôle recherché
+     * @return Liste des utilisateurs ayant ce rôle
+     */
+    List<UserAggregate> findByRole(UserRole role);
 }

@@ -24,154 +24,166 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * SecurityConfig - Configuration de Spring Security pour l'ERP TANTY
- * Configure l'authentification JWT, les autorisations par rôle et CORS
- */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    // Filtre JWT pour l'authentification
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+  private final JwtAuthenticationFilter jwtAuthenticationFilter;
+  private final UserDetailsService userDetailsService;
 
-    // Service de détails utilisateur personnalisé
-    private final UserDetailsService userDetailsService;
+  public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, UserDetailsService userDetailsService) {
+    this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    this.userDetailsService = userDetailsService;
+  }
 
-    /**
-     * Constructeur avec injection du filtre JWT et du UserDetailsService
-     * @param jwtAuthenticationFilter Filtre d'authentification JWT
-     * @param userDetailsService Service de détails utilisateur
-     */
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter, UserDetailsService userDetailsService) {
-        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
-        this.userDetailsService = userDetailsService;
-    }
+  @Bean
+  public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    http.csrf(csrf -> csrf.disable());
+    http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
 
-    /**
-     * Configure le filtre de chaîne de sécurité HTTP
-     * Définit les règles d'accès aux endpoints et la stratégie de session
-     * @param http Configuration HTTP de Spring Security
-     * @return Chaîne de filtres de sécurité
-     * @throws Exception En cas d'erreur de configuration
-     */
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        // Désactiver CSRF car nous utilisons JWT (stateless)
-        http.csrf(csrf -> csrf.disable());
+    // Security headers — Spring Security enables these by default;
+    // we just need to ensure frameOptions is DENY (not SAMEORIGIN)
+    http.headers(headers -> headers
+      .frameOptions(frame -> frame.deny())
+    );
 
-        // Configurer CORS pour autoriser les requêtes du frontend
-        http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
+    http.authorizeHttpRequests(auth -> auth
+      // Endpoints publics
+      .requestMatchers("/api/v1/auth/**").permitAll()
+      .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+      // Actuator: restrict to localhost in production (health endpoint stays public)
+      .requestMatchers("/actuator/health").permitAll()
+      .requestMatchers("/actuator/**").hasAuthority(UserRole.ROLE_ADMIN.name())
 
-        // Configurer les règles d'autorisation par endpoint
-        http.authorizeHttpRequests(auth -> auth
-                // Endpoints publics d'authentification (pas de token requis)
-                .requestMatchers("/api/v1/auth/**").permitAll()
-                .requestMatchers("/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                .requestMatchers("/actuator/**").permitAll()
+      // Module Stock - Gestionnaire, Validateur, Direction, Admin, + Production et Finance
+      // (nécessaires pour les workflows de réception croisés : un Responsable production
+      // valide les réceptions de produits finis, un Comptable valide les réceptions de
+      // matière première - cf. cahier des charges §3). Sans ces rôles ici, ces utilisateurs
+      // recevaient un 403 au niveau du filtre HTTP avant même d'atteindre le contrôleur,
+      // quel que soit le contrôle @PreAuthorize plus fin appliqué ensuite.
+      .requestMatchers("/api/v1/stock/**").hasAnyAuthority(
+        UserRole.ROLE_STOCK.name(),
+        UserRole.ROLE_MAGASINIER.name(),
+        UserRole.ROLE_VALIDATEUR.name(),
+        UserRole.ROLE_PRODUCTION.name(),
+        UserRole.ROLE_FINANCE.name(),
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Endpoints du module Stock (nécessitent le rôle ROLE_STOCK ou ROLE_ADMIN)
-                .requestMatchers("/api/v1/stock/**").hasAnyAuthority(UserRole.ROLE_STOCK.name(), UserRole.ROLE_ADMIN.name())
+      // Module Stock infrastructure/web controllers - memes roles
+      .requestMatchers("/api/stock/**").hasAnyAuthority(
+        UserRole.ROLE_STOCK.name(),
+        UserRole.ROLE_MAGASINIER.name(),
+        UserRole.ROLE_VALIDATEUR.name(),
+        UserRole.ROLE_PRODUCTION.name(),
+        UserRole.ROLE_FINANCE.name(),
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Endpoints du module Commercial (nécessitent le rôle ROLE_COMMERCIAL ou ROLE_ADMIN)
-                .requestMatchers("/api/v1/commercial/**").hasAnyAuthority(UserRole.ROLE_COMMERCIAL.name(), UserRole.ROLE_ADMIN.name())
+      // Module Commercial
+      .requestMatchers("/api/v1/commercial/**").hasAnyAuthority(
+        UserRole.ROLE_COMMERCIAL.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Endpoints du module Production (nécessitent le rôle ROLE_PRODUCTION ou ROLE_ADMIN)
-                .requestMatchers("/api/v1/production/**").hasAnyAuthority(UserRole.ROLE_PRODUCTION.name(), UserRole.ROLE_ADMIN.name())
+      // Module Commercial (nouveaux contrôleurs)
+      .requestMatchers("/api/commercial/**").hasAnyAuthority(
+        UserRole.ROLE_COMMERCIAL.name(),
+        UserRole.ROLE_FINANCE.name(),
+        UserRole.ROLE_RH.name(),
+        UserRole.ROLE_CAISSIER.name(),
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Endpoints du module Finance (nécessitent le rôle ROLE_FINANCE ou ROLE_ADMIN)
-                .requestMatchers("/api/v1/finance/**").hasAnyAuthority(UserRole.ROLE_FINANCE.name(), UserRole.ROLE_ADMIN.name())
+      // Module Production
+      .requestMatchers("/api/v1/production/**").hasAnyAuthority(
+        UserRole.ROLE_PRODUCTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Endpoints du module RH (nécessitent le rôle ROLE_RH ou ROLE_ADMIN)
-                .requestMatchers("/api/v1/rh/**").hasAnyAuthority(UserRole.ROLE_RH.name(), UserRole.ROLE_ADMIN.name())
+      // Module Production (nouveaux contrôleurs)
+      .requestMatchers("/api/production/**").hasAnyAuthority(
+        UserRole.ROLE_PRODUCTION.name(),
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Endpoints de la Direction (lecture seule pour ROLE_DIRECTION)
-                .requestMatchers("/api/v1/direction/**").hasAnyAuthority(UserRole.ROLE_DIRECTION.name(), UserRole.ROLE_ADMIN.name())
+      // Module Finance
+      .requestMatchers("/api/v1/finance/**").hasAnyAuthority(
+        UserRole.ROLE_FINANCE.name(),
+        UserRole.ROLE_ADMIN.name())
 
-                // Toutes les autres requêtes nécessitent une authentification
-                .anyRequest().authenticated()
-        );
+      // Module Comptabilité (mappé sur ROLE_FINANCE + ROLE_DIRECTION + ROLE_VALIDATEUR)
+      .requestMatchers("/api/comptabilite/**").hasAnyAuthority(
+        UserRole.ROLE_FINANCE.name(),
+        UserRole.ROLE_RH.name(),
+        UserRole.ROLE_CAISSIER.name(),
+        UserRole.ROLE_COMMERCIAL.name(),
+        UserRole.ROLE_VALIDATEUR.name(),
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-        // Configurer la stratégie de session comme STATELESS (pas de session HTTP)
-        http.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+      // Module DG
+      .requestMatchers("/api/dg/**").hasAnyAuthority(
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-        // Ajouter le filtre JWT avant le filtre d'authentification par username/password
-        http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+      // Module Contrôle
+      .requestMatchers("/api/controle/**").hasAnyAuthority(
+        UserRole.ROLE_VALIDATEUR.name(),
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-        // Retourner la chaîne de filtres configurée
-        return http.build();
-    }
+      // Module RH
+      .requestMatchers("/api/v1/rh/**").hasAnyAuthority(
+        UserRole.ROLE_RH.name(),
+        UserRole.ROLE_ADMIN.name())
 
-    /**
-     * Configure la source de configuration CORS
-     * Autorise les requêtes depuis le frontend Angular
-     * @return Source de configuration CORS
-     */
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        // Créer une nouvelle configuration CORS
-        CorsConfiguration configuration = new CorsConfiguration();
+      // Direction - lecture seule
+      .requestMatchers("/api/v1/direction/**").hasAnyAuthority(
+        UserRole.ROLE_DIRECTION.name(),
+        UserRole.ROLE_ADMIN.name())
 
-        // Autoriser les credentials (cookies, en-têtes d'autorisation)
-        configuration.setAllowCredentials(true);
+      // Toutes les autres requetes necessitent une authentification
+      .anyRequest().authenticated()
+    );
 
-        // Autoriser les origines spécifiques (frontend Angular)
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:4200", "http://localhost:3000","http://localhost:56621"));
+    http.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+    http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
-        // Autoriser tous les en-têtes
-        configuration.setAllowedHeaders(List.of("*"));
+    return http.build();
+  }
 
-        // Autoriser les méthodes HTTP spécifiques
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+  @Bean
+  public CorsConfigurationSource corsConfigurationSource() {
+    CorsConfiguration configuration = new CorsConfiguration();
+    configuration.setAllowCredentials(true);
+    configuration.setAllowedOrigins(Arrays.asList(
+      "http://localhost:4200",
+      "http://localhost:3000",
+      "http://localhost:56621",
+      "https://tantyweb.vercel.app/"));
+    configuration.setAllowedHeaders(List.of("*"));
+    configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"));
+    configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
 
-        // Exposer les en-têtes personnalisés
-        configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
+    UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+    source.registerCorsConfiguration("/**", configuration);
+    return source;
+  }
 
-        // Créer une source de configuration basée sur URL
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+  @Bean
+  public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+    return config.getAuthenticationManager();
+  }
 
-        // Appliquer la configuration à tous les chemins
-        source.registerCorsConfiguration("/**", configuration);
+  @Bean
+  public AuthenticationProvider authenticationProvider(PasswordEncoder passwordEncoder) {
+    DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+    provider.setPasswordEncoder(passwordEncoder);
+    return provider;
+  }
 
-        // Retourner la source de configuration
-        return source;
-    }
-
-    /**
-     * Bean pour le gestionnaire d'authentification
-     * Utilisé pour authentifier les utilisateurs avec username/password
-     * @param config Configuration d'authentification Spring
-     * @return Gestionnaire d'authentification
-     * @throws Exception En cas d'erreur de configuration
-     */
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        // Retourner le gestionnaire d'authentification configuré
-        return config.getAuthenticationManager();
-    }
-
-    /**
-     * Bean pour le fournisseur d'authentification
-     * Configure le UserDetailsService et le PasswordEncoder
-     * @param passwordEncoder Encodeur de mot de passe
-     * @return Fournisseur d'authentification
-     */
-    @Bean
-    public AuthenticationProvider authenticationProvider(PasswordEncoder passwordEncoder) {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
-        provider.setPasswordEncoder(passwordEncoder);
-        return provider;
-    }
-
-    /**
-     * Bean pour l'encodeur de mot de passe
-     * Utilise BCrypt pour le hachage sécurisé des mots de passe
-     * @return Encodeur de mot de passe BCrypt
-     */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        // Retourner un nouvel encodeur BCrypt
-        return new BCryptPasswordEncoder();
-    }
+  @Bean
+  public PasswordEncoder passwordEncoder() {
+    return new BCryptPasswordEncoder();
+  }
 }

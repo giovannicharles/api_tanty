@@ -52,8 +52,12 @@ public class CustomUserDetailsService implements UserDetailsService {
             throw new UsernameNotFoundException("Compte verrouillé: " + matricule);
         }
 
-        // Créer les autorités basées sur le rôle de l'utilisateur
-        SimpleGrantedAuthority authority = new SimpleGrantedAuthority("ROLE_" + userAggregate.getRole().name());
+        // Créer les autorités basées sur le rôle de l'utilisateur.
+        // BUG CORRIGÉ : userAggregate.getRole().name() vaut déjà "ROLE_STOCK", "ROLE_FINANCE", etc.
+        // (voir l'enum UserRole) ; préfixer à nouveau par "ROLE_" produisait "ROLE_ROLE_STOCK",
+        // ce qui empêchait tout contrôle @PreAuthorize("hasRole('STOCK')") ou hasAuthority('ROLE_STOCK')
+        // de fonctionner pour qui que ce soit.
+        SimpleGrantedAuthority authority = new SimpleGrantedAuthority(userAggregate.getRole().name());
 
         // Construire et retourner l'objet UserDetails pour Spring Security
         return User.builder()
